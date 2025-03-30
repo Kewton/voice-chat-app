@@ -10,12 +10,18 @@ frontend/.pnp.*
 
 # next.js
 frontend/.next/
+frontend/.env.local
 
 # production
 frontend/dist
+.DS_Store
 
 
 # backend
-backend/__pycache__/
+backend/.pytest_cache
 backend/venv/
 backend/.env
+backend/*.wav
+__pycache__/
+.pytest_cache/
+

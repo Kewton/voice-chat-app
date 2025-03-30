@@ -2,25 +2,22 @@
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 import speech_recognition as sr
-# import openai  # OpenAI (ChatGPT)
 import google.generativeai as genai  # Google Gemini
-from pydantic import BaseModel
-import asyncio
 import json
 import os
 from typing import Dict, List
 from dotenv import load_dotenv
+import asyncio
+from openai import AsyncOpenAI
+import time
+import pyaudio
 
 
 load_dotenv(verbose=True)
+
 # LLM APIキーの設定 (環境変数から)
-# openai.api_key = os.environ.get("OPENAI_API_KEY")
 GOOGLE_API_KEY = os.environ.get("GOOGLE_API_KEY")
 genai.configure(api_key=GOOGLE_API_KEY)
-
-# SpeechRecognition の初期化
-r = sr.Recognizer()
-
 # Geminiモデルの設定
 generation_config = {
   "temperature": 0.9,
@@ -52,6 +49,41 @@ model = genai.GenerativeModel(model_name="gemini-1.5-flash",
                               generation_config=generation_config,
                               safety_settings=safety_settings)
 
+OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
+openai = AsyncOpenAI(api_key=OPENAI_API_KEY)
+
+# SpeechRecognition の初期化
+r = sr.Recognizer()
+
+
+async def synthesize_speech(
+    text: str,
+    voice: str = "coral",
+    instructions: str = "Speak in a cheerful and positive tone."
+) -> bytes:
+    """
+    OpenAIのTTS APIを用い、テキストからPCM形式の音声データを非同期に生成します。
+    """
+    player_stream = pyaudio.PyAudio().open(format=pyaudio.paInt16, channels=1, rate=24000, output=True)
+
+    start_time = time.time()
+
+    print(f"tts test:{text}")
+    async with openai.audio.speech.with_streaming_response.create(
+        model="gpt-4o-mini-tts",
+        voice=voice,
+        input=text,
+        instructions=instructions,
+        response_format="pcm",
+    ) as response:
+        print(f"Time to first byte: {int((time.time() - start_time) * 1000)}ms")
+        async for chunk in response.iter_bytes(chunk_size=1024):
+            # print(chunk)
+            player_stream.write(chunk)
+    print(f"Done in {int((time.time() - start_time) * 1000)}ms.")
+    return bytes(player_stream)
+
+
 # FastAPI インスタンスの作成
 app = FastAPI()
 
@@ -67,33 +99,37 @@ app.add_middleware(
 # 会話履歴を保存する辞書型
 conversations: Dict[str, List[Dict]] = {}
 
+
 # WebSocket接続を管理するクラス
 class ConnectionManager:
     def __init__(self):
-        self.active_connections: Dict[str, WebSocket] = {} #修正
+        # 修正
+        self.active_connections: Dict[str, WebSocket] = {}
 
     async def connect(self, websocket: WebSocket, client_id: str):
         await websocket.accept()
         self.active_connections[client_id] = websocket
-        conversations[client_id] = [] #初期化
+        # 初期化
+        conversations[client_id] = []
 
     def disconnect(self, client_id: str):
         del self.active_connections[client_id]
         if client_id in conversations:
-          del conversations[client_id]
+            del conversations[client_id]
 
     async def send_text_message(self, message: str, client_id: str):
-          if client_id in self.active_connections:
+        if client_id in self.active_connections:
             await self.active_connections[client_id].send_text(message)
 
+
 manager = ConnectionManager()
+
 
 # 音声認識とLLM応答のための非同期関数
 async def process_audio(audio_data: sr.AudioData, client_id: str):
     try:
         text = r.recognize_google(audio_data, language='ja-JP')
         print(f"Recognized: {text}")
-
 
         # 音声データをWAVファイルとして保存 (デバッグ用)
         with open(f"audio_{client_id}.wav", "wb") as f:
@@ -102,7 +138,12 @@ async def process_audio(audio_data: sr.AudioData, client_id: str):
 
         # 会話履歴に追加
         if client_id in conversations:
-            conversations[client_id].append({"role": "user", "parts": [text]})
+            _text = """
+            あなたはてぃ先生です。保育士のプロです。
+            質問に対し3~4歳児向けに回答し、150~200文字程度に要約し端的に回答してください。質問は次です。
+            """
+            _text += text
+            conversations[client_id].append({"role": "user", "parts": [_text]})
         print(conversations)
         # LLMで応答を生成 (ChatGPTの例)
         # response = openai.ChatCompletion.create(
@@ -114,18 +155,26 @@ async def process_audio(audio_data: sr.AudioData, client_id: str):
         # )
         # llm_response = response.choices[0].message.content
 
-        #gemini
+        # gemini
         if client_id in conversations:
-          chat = model.start_chat(history=conversations[client_id])
-          llm_response = chat.send_message(text).text
-          print(llm_response)
+            chat = model.start_chat(history=conversations[client_id])
+            llm_response = chat.send_message(text).text
+            print(llm_response)
 
         # 応答を履歴に追加
         if client_id in conversations:
             conversations[client_id].append({"role": "model", "parts": [llm_response]})
 
-        # クライアントに応答を送信
-        await manager.send_text_message(llm_response, client_id)
+        # 0329 コメントアウト
+        # # クライアントに応答を送信
+        # await manager.send_text_message(llm_response, client_id)
+        # ##
+
+        # TTS APIでテキストを音声に変換（PCM形式）
+        audio_bytes = await synthesize_speech(llm_response)
+
+        # クライアントへ音声データ（バイナリ）を送信
+        await manager.send_audio_message(audio_bytes, client_id)
 
     except sr.UnknownValueError:
         await manager.send_text_message("ごめんなさい、よく聞き取れませんでした。", client_id)
@@ -133,8 +182,9 @@ async def process_audio(audio_data: sr.AudioData, client_id: str):
         await manager.send_text_message("エラーが発生しました。", client_id)
         print(f"Could not request results from Google Speech Recognition service; {e}")
     except Exception as e:
-        await manager.send_text_message("エラーが発生しました。", client_id)
         print(e)
+        if "cannot convert 'Stream' object to bytes" != str(e):
+            await manager.send_text_message("エラーが発生しました。", client_id)
 
 
 @app.websocket("/ws/{client_id}")
@@ -157,10 +207,12 @@ async def websocket_endpoint(websocket: WebSocket, client_id: str):
                     print("音声認識処理を非同期で実行")
                     with sr.Microphone() as source:
                         try:
-                            audio = r.listen(source, timeout=5, phrase_time_limit=8)  # タイムアウトを設定
+                            # タイムアウトを設定
+                            audio = r.listen(source, timeout=5, phrase_time_limit=8)
                             asyncio.create_task(process_audio(audio, client_id))
                         except sr.WaitTimeoutError:
-                            await manager.send_text_message("...", client_id)  # タイムアウトの時
+                            # タイムアウトの時
+                            await manager.send_text_message("...", client_id)
                         except Exception as e:
                             await manager.send_text_message("エラーが発生しました。", client_id)
                             print(e)

@@ -1,7 +1,12 @@
 fastapi
 uvicorn[standard]
 python-multipart
-speechrecognition
+SpeechRecognition
 google-generativeai
 python-dotenv
 pyaudio
+openai
+pydantic-settings
+python-dotenv
+flake8
+pytest
