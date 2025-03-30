@@ -1,0 +1,43 @@
+version: '3.8'
+
+services:
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: voice-chat-frontend
+    ports:
+      # Map host ports to container ports
+      - "3000:3000" # Next.js app
+      - "3001:3001" # NestJS WebSocket server
+    environment:
+      # Environment variables for the container (production/staging)
+      NODE_ENV: production
+      # WebSocket URLs accessible from the user's browser
+      # Assumes the browser can access the host machine where docker is running on localhost
+      # If deploying elsewhere, change localhost accordingly.
+      NEXT_PUBLIC_NESTJS_WS_URL: ws://localhost:3001/voice-chat
+      # If FastAPI runs on the host machine, use host.docker.internal (on Docker Desktop)
+      # or the host's IP address. If FastAPI runs in another docker-compose service
+      # (e.g., named 'fastapi'), use ws://fastapi:5000/ws/
+      NEXT_PUBLIC_FASTAPI_WS_URL: ws://host.docker.internal:5000/ws/ # For Docker Desktop accessing host
+      # NEXT_PUBLIC_FASTAPI_WS_URL: ws://172.17.0.1:5000/ws/ # Example for Linux default bridge network host IP
+      # NEXT_PUBLIC_FASTAPI_WS_URL: ws://fastapi_service_name:5000/ws/ # If FastAPI is another service
+    restart: unless-stopped
+    # Optional: Add volumes for persistent data if needed
+    # volumes:
+    #   - .:/app # Example: Mount local code for development (not recommended for production image)
+
+# Optional: Define network if needed, e.g., to connect with a separate FastAPI container
+# networks:
+#   app-network:
+#     driver: bridge
+
+# Add FastAPI service definition here if it runs as another container
+# services:
+#   fastapi:
+#     build: ../backend # Assuming backend is in ../backend
+#     ports:
+#       - "5000:5000"
+#     networks:
+#       - app-network

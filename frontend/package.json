@@ -7,8 +7,9 @@
     "dev:next": "next dev",
     "start:dev": "nest start --watch",
     "start:nest": "cd src && npm run start:dev",
-    "build": "nest build",
-    "build:nest": "cd src && npm run build",
+    "build:nest": "nest build",
+    "build:next": "next build",
+    "build": "npm run build:nest && npm run build:next",
     "start": "next start",
     "lint": "next lint"
   },
